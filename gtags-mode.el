@@ -5,7 +5,7 @@
 ;; Author: Jimmy Aguilar Mena
 ;; URL: https://github.com/Ergus/gtags-mode
 ;; Keywords: xref, project, imenu, gtags, global
-;; Version: 1.6
+;; Version: 1.8
 ;; Package-Requires: ((emacs "28"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -70,6 +70,12 @@
 (defcustom gtags-mode-lighter " Gtags"
   "The text displayed in the mode line."
   :type 'string
+  :risky t)
+
+(defcustom gtags-mode-features '(project xref completion imenu hooks)
+  "The list of features enabled in gtags-mode.
+This variable must be set before enabling gtags-mode"
+  :type '(repeat symbol)
   :risky t)
 
 (defcustom gtags-mode-verbose-level 2
@@ -189,6 +195,27 @@ On success return a list of strings or nil if any error occurred."
     (gtags-mode--message 1 "Can't start sync %s subprocess" cmd)
     nil))
 
+(defsubst gtags-mode--get-root (dir)
+  "Get the top dbpath given DIR.
+Includes the remote prefix concatenation when needed."
+  ;; The first check is an Heuristic to create new plists only when
+  ;; visiting real files This optimizes when there is not tags file to
+  ;; avoid calling the external process repeatedly i.e in magit
+  ;; buffers that are regenerated every time and forgets the local
+  ;; variables
+  (when-let* (((and gtags-mode--global buffer-file-name))
+	      ;; Then suppress any warning when searching the root
+	      ;; because `global' returns an error value when there is
+	      ;; not dbpath found.
+	      (gtags-mode-verbose-level 0)
+	      (default-directory dir)
+	      ;; The check id independent of the concat because when
+	      ;; empty (no root) on remote systems, the concat will
+	      ;; returns always a non nil value.
+	      (root (car (gtags-mode--exec-sync "--print-dbpath"))))
+    (concat (file-remote-p dir)              ;; add remote prefix if remote
+	    (file-name-as-directory root)))) ;; add a / at the end if missing
+
 ;; Utilities functions (a bit less low level) ========================
 (defun gtags-mode--get-plist (dir)
   "Return the plist for DIR from `gtags-mode--alist'."
@@ -198,10 +225,7 @@ On success return a list of strings or nil if any error occurred."
 
 (defun gtags-mode--create-plist (dir)
   "Return dbpath for DIR or nil if none."
-  (when-let* ((default-directory dir)
-	      (root (car (gtags-mode--exec-sync "--print-dbpath"))))
-    (setq root (concat (file-remote-p default-directory) ;; add remote prefix if remote
-		       (file-name-as-directory root)))   ;; add a / at the end is missing
+  (when-let ((root (gtags-mode--get-root dir)))
     (gtags-mode--message 2 "Gtags file in %s applies to default-directory: %s" root dir)
     (or (gtags-mode--get-plist root)   ;; already exist
 	(car (push `(:gtagsroot ,root :cache nil) gtags-mode--alist)))))
@@ -212,12 +236,7 @@ On success return a list of strings or nil if any error occurred."
     (gtags-mode--set-connection-locals)
     (setq-local gtags-mode--plist
 		(or (gtags-mode--get-plist default-directory)
-		    ;; Heuristic to create new plists only when visiting real files
-		    ;; This optimizes when there is not tags file to avoid calling
-		    ;; the external process repeatedly i.e in magit buffers that are
-		    ;; regenerated every time and forgets the local variables
-		    (when (buffer-file-name)
-		      (gtags-mode--create-plist default-directory))))))
+		    (gtags-mode--create-plist default-directory)))))
 
 (defun gtags-mode--local-plist (&optional dir)
   "Set and return the buffer local value of `gtags-mode--plist'."
@@ -254,7 +273,7 @@ name, code, file, line."
 					      line (1+ (match-beginning 1)) (match-end 1))) ;; file
 				(string-to-number (match-string-no-properties 3 line))))) ;; line
 		   (apply #'gtags-mode--exec-sync
-		    (append args gtags-mode--output-format-options `(,symbol)) )))
+		    (append gtags-mode--output-format-options args `(,symbol)) )))
     (error "Calling gtags-mode--filter-find-symbol without GTAGSROOT")
     nil))
 
@@ -317,7 +336,7 @@ Return as a list of xref location objects."
 
 (cl-defmethod xref-backend-references ((_backend (head :gtagsroot)) symbol)
   "List all referenced for SYMBOL."
-  (gtags-mode--xref-find-symbol '("--reference") symbol))
+  (gtags-mode--xref-find-symbol '("--reference" "--symbol") symbol))
 
 (cl-defmethod xref-backend-apropos ((_backend (head :gtagsroot)) symbol)
   "List grepped list of candidates SYMBOL."
@@ -379,6 +398,11 @@ Return as a list of xref location objects."
 	      (completion-table-dynamic #'gtags-mode--list-completions)
 	      :exclusive 'no))))
 
+(defmacro gtags-mode--with-feature (feature &rest body)
+  (declare (indent 1) (debug t))
+  `(when (memq ,feature gtags-mode-features)
+     ,@body))
+
 ;;;###autoload
 (define-minor-mode gtags-mode
   "Use GNU Global as backend for project, xref, capf and imenu.
@@ -388,11 +412,16 @@ rely on their original or user configured default behavior."
   :lighter gtags-mode-lighter
   (cond
    (gtags-mode
-    (add-hook 'project-find-functions #'gtags-mode--local-plist)
-    (add-hook 'xref-backend-functions #'gtags-mode--local-plist)
-    (add-hook 'completion-at-point-functions #'gtags-mode-completion-function)
-    (add-hook 'after-save-hook #'gtags-mode--after-save-hook)
-    (advice-add imenu-create-index-function :before-until #'gtags-mode--imenu-advice))
+    (gtags-mode--with-feature 'project
+      (add-hook 'project-find-functions #'gtags-mode--local-plist))
+    (gtags-mode--with-feature 'xref
+      (add-hook 'xref-backend-functions #'gtags-mode--local-plist))
+    (gtags-mode--with-feature 'completion
+      (add-hook 'completion-at-point-functions #'gtags-mode-completion-function))
+    (gtags-mode--with-feature 'hooks
+      (add-hook 'after-save-hook #'gtags-mode--after-save-hook))
+    (gtags-mode--with-feature 'imenu
+      (advice-add imenu-create-index-function :before-until #'gtags-mode--imenu-advice)))
    (t
     (remove-hook 'project-find-functions #'gtags-mode--local-plist)
     (remove-hook 'xref-backend-functions #'gtags-mode--local-plist)
