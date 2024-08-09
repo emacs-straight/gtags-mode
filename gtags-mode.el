@@ -5,7 +5,7 @@
 ;; Author: Jimmy Aguilar Mena
 ;; URL: https://github.com/Ergus/gtags-mode
 ;; Keywords: xref, project, imenu, gtags, global
-;; Version: 1.8
+;; Version: 1.8.1
 ;; Package-Requires: ((emacs "28"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -75,7 +75,11 @@
 (defcustom gtags-mode-features '(project xref completion imenu hooks)
   "The list of features enabled in gtags-mode.
 This variable must be set before enabling gtags-mode"
-  :type '(repeat symbol)
+  :type '(set (const project)
+              (const xref)
+              (const completion)
+              (const imenu)
+              (const hooks))
   :risky t)
 
 (defcustom gtags-mode-verbose-level 2
@@ -195,6 +199,8 @@ On success return a list of strings or nil if any error occurred."
     (gtags-mode--message 1 "Can't start sync %s subprocess" cmd)
     nil))
 
+
+
 (defsubst gtags-mode--get-root (dir)
   "Get the top dbpath given DIR.
 Includes the remote prefix concatenation when needed."
@@ -251,7 +257,8 @@ completions usually from the cache when possible."
   (cond ;; TODO: use with-memoization in the future it will be on emacs 29.1
    ((not (gtags-mode--local-plist default-directory))
     (error "Calling `gtags-mode--list-completions' with no gtags-mode--plist"))
-   ((and (stringp prefix) (not (string-blank-p prefix))
+   ((and (stringp prefix)
+	 (not (string-match-p "\\`[ \t\n\r-]*\\'" prefix)) ;; not match empty or only -
 	 (gtags-mode--exec-sync "--ignore-case" "--completion" prefix)))
    ((plist-get gtags-mode--plist :cache))
    (t (plist-put gtags-mode--plist :cache (gtags-mode--exec-sync "--completion"))
