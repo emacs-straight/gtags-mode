@@ -1,2 +1,2 @@
 ;; Generated package description from gtags-mode.el  -*- mode: lisp-data; no-byte-compile: t -*-
-(define-package "gtags-mode" "1.8.4.0.20250506.233945" "GNU Global integration with xref, project and imenu." '((emacs "28")) :commit "a3d29799acc6ebdbf81684bfac45fff2c8a9f975" :keywords '("xref" "project" "imenu" "gtags" "global") :url "https://github.com/Ergus/gtags-mode")
+(define-package "gtags-mode" "1.8.5.0.20250511.220137" "GNU Global integration with xref, project and imenu." '((emacs "28")) :commit "333b0ac032397d9803fc0c4cf7012f0b7c2e68fb" :keywords '("xref" "project" "imenu" "gtags" "global") :url "https://github.com/Ergus/gtags-mode")
