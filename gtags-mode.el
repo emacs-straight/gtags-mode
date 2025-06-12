@@ -5,7 +5,7 @@
 ;; Author: Jimmy Aguilar Mena
 ;; URL: https://github.com/Ergus/gtags-mode
 ;; Keywords: xref, project, imenu, gtags, global
-;; Version: 1.8.8
+;; Version: 1.9.1
 ;; Package-Requires: ((emacs "28"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -157,14 +157,17 @@ This is the sentinel set in `gtags-mode--exec-async'."
 	    (when (functionp extra-sentinel)           ;; run extra sentinel
 	      (funcall extra-sentinel))
 	    (when gtags-mode--plist                    ;; clear cache
-	      (plist-put gtags-mode--plist :cache nil)))))
+	      (setq gtags-mode--plist (plist-put gtags-mode--plist :cache nil))))))
     (with-current-buffer (process-buffer process)      ;; In failure print error
       (while (accept-process-output process))
       (gtags-mode--message 1 "Global async error output:\n%s"
 			   (string-trim
 			    (buffer-substring-no-properties (point-min) (point-max))))))
-  (gtags-mode--message 2 "Async %s: %s"
-		       (process-get process :command) (string-trim event))) ;; Always notify
+  (gtags-mode--message 2 "Async %s: result: %s elapsed: %.06f"
+		       (process-get process :command)
+		       (string-trim event)
+		       (float-time (time-subtract (current-time)
+						  (process-get process :start-time))))) ;; Always notify
 
 (defun gtags-mode--exec-async (cmd &rest args)
   "Run CMD with ARGS on TARGET asynchronously.
@@ -173,6 +176,7 @@ Start an asynchronous process and sets
 Returns the process object."
   (if-let* ((cmd (buffer-local-value cmd (current-buffer)))
 	    (command (append `(,cmd) (string-split gtags-mode-update-args) args))
+	    (start-time (current-time))
 	    (pr (make-process :name (format "%s-async" cmd)
 			      :buffer (generate-new-buffer " *temp*" t)
 			      :command command
@@ -180,7 +184,9 @@ Returns the process object."
 			      :file-handler t)))
       (progn
 	;; In future not needed with `remote-commands'.
-	(set-process-plist pr `(:parent-buffer ,(current-buffer) :command ,command))
+	(set-process-plist pr (list :parent-buffer (current-buffer)
+				    :command command
+				    :start-time start-time))
 	pr)
     (gtags-mode--message 1 "Can't start async %s subprocess" cmd)
     nil))
@@ -190,18 +196,19 @@ Returns the process object."
 On success return a list of strings or nil if any error occurred."
   (if-let* ((cmd gtags-mode--global)) ;; Required for with-temp-buffer
       (with-temp-buffer
-	(let* ((status (apply #'process-file cmd nil (current-buffer) nil args))
+	(let* ((start-time (current-time))
+	       (status (apply #'process-file cmd nil (current-buffer) nil args))
 	       (output (string-trim
 			(buffer-substring-no-properties (point-min) (point-max)))))
 	  (if (eq status 0)
 	      (string-lines output t)
 	    (gtags-mode--message 1 "Global sync error output:\n%s" output)
-	    (gtags-mode--message 1 "Sync %s %s: exited abnormally with code %s" cmd args status)
+	    (gtags-mode--message 1 "Sync %s %s: exited abnormally with code: %s elapsed: %.06f"
+				 cmd args status
+				 (float-time (time-subtract (current-time) start-time)))
 	    nil)))
     (gtags-mode--message 1 "Can't start sync %s subprocess" cmd)
     nil))
-
-
 
 (defsubst gtags-mode--get-root (dir)
   "Get the top dbpath given DIR.
@@ -244,7 +251,11 @@ Includes the remote prefix concatenation when needed."
     (gtags-mode--set-connection-locals)
     (setq-local gtags-mode--plist
 		(or (gtags-mode--get-plist default-directory)
-		    (gtags-mode--create-plist default-directory)))))
+		    (gtags-mode--create-plist default-directory)))
+    (when buffer-file-name
+      (setq-local gtags-mode--plist
+		  (plist-put gtags-mode--plist
+			     :true-file-name (file-truename buffer-file-name))))))
 
 (defun gtags-mode--local-plist (&optional dir)
   "Set and return the buffer local value of `gtags-mode--plist'."
@@ -268,11 +279,13 @@ completions usually from the cache when possible."
 				"--through" "--completion"
 				(substring-no-properties prefix))))
    ((plist-get gtags-mode--plist :cache))
-   (t (plist-put gtags-mode--plist :cache
-		 (gtags-mode--exec-sync "--directory"
-					(file-local-name
-					 (plist-get (gtags-mode--local-plist default-directory) :gtagsroot))
-					"--through" "--completion"))
+   (t (setq gtags-mode--plist
+	    (plist-put gtags-mode--plist
+		       :cache (gtags-mode--exec-sync
+			       "--directory"
+			       (file-local-name
+				(plist-get (gtags-mode--local-plist default-directory) :gtagsroot))
+			       "--through" "--completion")))
       (plist-get gtags-mode--plist :cache))))
 
 (defun gtags-mode--filter-find-symbol (args symbol creator)
@@ -320,7 +333,8 @@ This iterates over the buffers and tries to reset
   "Update GLOBAL project database."
   (interactive)
   (when (gtags-mode--local-plist default-directory)
-    (gtags-mode--exec-async 'gtags-mode--global "--update")))
+    (let ((default-directory (plist-get gtags-mode--plist :gtagsroot)))
+      (gtags-mode--exec-async 'gtags-mode--global "--update"))))
 
 ;; Hooks =============================================================
 (defun gtags-mode--after-save-hook ()
@@ -331,9 +345,10 @@ won't have `buffer-file-name' but will just acquire one."
   (when (and buffer-file-name
 	     (or gtags-mode--plist
 		 (gtags-mode--set-local-plist default-directory)))
-    (gtags-mode--exec-async
-     'gtags-mode--global
-     "--single-update" (file-name-nondirectory buffer-file-name))))
+    (when-let* ((default-directory (plist-get gtags-mode--plist :gtagsroot))
+		(true-file-name (plist-get gtags-mode--plist :true-file-name)))
+      (gtags-mode--exec-async
+       'gtags-mode--global "--single-update" (file-relative-name true-file-name)))))
 
 ;; xref integration ==================================================
 (defun gtags-mode--xref-find-symbol (args symbol)
