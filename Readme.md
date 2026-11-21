@@ -1,6 +1,9 @@
 Readme
 ======
 
+[![test](https://github.com/Ergus/gtags-mode/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/Ergus/gtags-mode/actions/workflows/test.yml)
+[![Coverage Status](https://coveralls.io/repos/github/Ergus/gtags-mode/badge.svg?branch=master)](https://coveralls.io/github/Ergus/gtags-mode?branch=master)
+
 This package provides GNU Global integration with xref, project,
 completion-at-point (capf) and imenu in emacs.
 
@@ -9,7 +12,7 @@ complete/complex features, maps and functionalities; like ggtags,
 gtags.el, gxref, agtags and some others. They are listed with a brief
 description in: [related sites](https://www.gnu.org/software/global/links.html).
 
-This package let all the work to the EMACS tools available for such
+This package leaves all the work to the EMACS tools available for such
 functionalities and avoids external dependencies.  Unlike other
 packages; this module does not create extra special maps, bindings or
 menus, but just adds support to the mentioned features to use
@@ -23,10 +26,12 @@ an emacs distribution and don't need external dependencies.
 Usage
 -----
 
+Requires Emacs 30 or later.
+
 Just load and enable the mode: `gtags-mode` or call it in a hook as
 usual. The mode is a global-minor-mode.
 
-With `use-packages`
+With `use-package`
 
 ```elisp
 (use-package gtags-mode
@@ -36,7 +41,7 @@ or simply
 
 ```elisp
 (unless (fboundp 'gtags-mode)
-	(autoload #'gtags-mode "gtags-mode" nil t))
+  (autoload #'gtags-mode "gtags-mode" nil t))
 (add-hook 'emacs-startup-hook #'gtags-mode)
 ```
 
@@ -55,7 +60,7 @@ the global/gtags executable are not in the usual locations, so the
 user can set them. `gtags-mode-global-executable`
 `gtags-mode-gtags-executable` are buffer local configuration options
 to set the path or names in case the user needs it or the user setup
-is do special that the command `executable-find` fails searching.
+is so special that the command `executable-find` fails searching.
 
 TRAMP users can use
 [*connection-local-variable*](https://www.gnu.org/software/emacs/manual/html_node/elisp/Connection-Local-Variables.html)
@@ -65,20 +70,20 @@ to set these values per individual hosts or users if needed.
 gtags-mode. By default all the features: `(project xref completion
 imenu hooks)` are enabled. The user only needs to remove one of these
 entries and restart `gtags-mode` to disable it.
-TODO: Improve the custom type for this variable in order to restrict
-possible values.
 
 The custom variable `gtags-mode-lighter` can be used to change the
-default mode-line message to use when the mode is enabled.
+default mode-line message.  It is shown only in buffers of a Global
+project, once the project has been looked up.
 
 The verbosity of messages printed can be controlled with
-`gtags-mode-verbose-level` higher verbose level implies more
+`gtags-mode-verbose-level`; a higher verbose level implies more
 messages and 0 prints no messages at all (not recommended!!). The most
 verbose messages are not printed in the echo area, but only in the
 `\*Messages\*` buffer.
 
 It is possible to pass extra arguments to update commands using the
-variable `gtags-mode-update-args`. Usually these can be used to use
+variable `gtags-mode-update-args`; it is split with shell syntax, so
+arguments containing spaces must be quoted. Usually these can be used to use
 different `global` backends.  For example, to use
 [universal-ctags](https://ctags.io/) instead of the default backend,
 the Arch Linux configuration is:
@@ -93,3 +98,34 @@ This variable can be set in the
 or as a
 [*connection-local-variable*](https://www.gnu.org/software/emacs/manual/html_node/elisp/Connection-Local-Variables.html)
 
+Tests
+-----
+
+The tests require GNU Global and `sh`.  Run them from the repository
+root with:
+
+```shell
+emacs -Q --batch -L . -l gtags-mode-tests.el -f ert-run-tests-batch-and-exit
+```
+
+Most tests run twice: on a local project and through TRAMP.  The
+TRAMP variant uses a `mock` method that logs into a local `sh`, so no
+remote host or server is needed; these tests are skipped when the
+method is unavailable.
+
+To run a subset, pass an ERT selector instead, e.g. only the TRAMP
+tests:
+
+```shell
+emacs -Q --batch -L . -l gtags-mode-tests.el \
+      --eval '(ert-run-tests-batch-and-exit "/remote$")'
+```
+
+GitHub Actions runs the tests with Emacs 30.1 and the development
+snapshot on every push to `master`, through `.github/report.el`: it
+writes a table of the tests to the job summary and annotates
+failures.  When the tests pass on both versions, a separate job reruns
+them on Emacs 30.1 with
+[undercover](https://github.com/undercover-el/undercover.el), writes
+the coverage to the job summary through `.github/coverage.el` and
+uploads it to [Coveralls](https://coveralls.io/github/Ergus/gtags-mode).
